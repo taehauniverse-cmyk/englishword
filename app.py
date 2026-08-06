@@ -4,12 +4,63 @@ import random
 import datetime
 import json
 import io
+import streamlit.components.v1 as components
 from gtts import gTTS
 
-# --- 페이지 기본 설정 ---
-st.set_page_config(page_title="3000 단어 10일 완성", page_icon="⚡", layout="centered")
+# --- 페이지 설정 ---
+st.set_page_config(page_title="15일 완성 3000 단어장", page_icon="⚡", layout="centered")
 
-# --- 원어민 발음 생성 함수 (gTTS) ---
+# --- 1. 화면 이탈 시 일시정지되는 실시간 접속 시간 타이머 (JS) ---
+timer_html = """
+<div id="study-timer" style="
+    position: fixed;
+    bottom: 15px;
+    right: 15px;
+    background: rgba(15, 23, 42, 0.85);
+    color: #38bdf8;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: bold;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 99999;
+    font-family: system-ui, -apple-system, sans-serif;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+">
+    ⏱️ 학습 시간: <span id="timer-display">00:00:00</span>
+</div>
+
+<script>
+(function() {
+    let activeSeconds = parseInt(localStorage.getItem('user_active_seconds') || '0');
+    let isVisible = !document.hidden;
+
+    document.addEventListener('visibilitychange', function() {
+        isVisible = !document.hidden;
+    });
+
+    setInterval(function() {
+        if (isVisible) {
+            activeSeconds++;
+            localStorage.setItem('user_active_seconds', activeSeconds);
+            
+            let hrs = String(Math.floor(activeSeconds / 3600)).padStart(2, '0');
+            let mins = String(Math.floor((activeSeconds % 3600) / 60)).padStart(2, '0');
+            let secs = String(activeSeconds % 60).padStart(2, '0');
+            
+            let display = document.getElementById('timer-display');
+            if (display) {
+                display.innerText = hrs + ":" + mins + ":" + secs;
+            }
+        }
+    }, 1000);
+})();
+</script>
+"""
+components.html(timer_html, height=0)
+
+# --- 원어민 발음 (gTTS) ---
 @st.cache_data
 def get_audio_bytes(text):
     try:
@@ -21,24 +72,23 @@ def get_audio_bytes(text):
     except:
         return None
 
-# --- 데이터로드 함수 ---
+# --- 데이터 로드 ---
 @st.cache_data
 def load_vocab_data():
     try:
-        df = pd.read_excel("English_3000_Words.xlsx")
-        return df
+        return pd.read_excel("English_3000_Words.xlsx")
     except Exception:
-        st.error("⚠️ 'English_3000_Words.xlsx' 파일을 찾을 수 없습니다. 앱 폴더에 엑셀 파일을 넣어주세요.")
+        st.error("⚠️ 'English_3000_Words.xlsx' 파일을 찾을 수 없습니다.")
         return None
 
 df = load_vocab_data()
 
-# --- 상태 초기화 ---
+# --- 사용자 상태 초기화 ---
 if "user_data" not in st.session_state:
     st.session_state.user_data = {
-        "streak": 1,
-        "last_login": str(datetime.date.today()),
-        "words": {} # word: {"box": 1, "next_review": str, "wrong_cnt": 0}
+        "start_date": str(datetime.date.today()),
+        "today_completed": 0,
+        "words": {}
     }
 
 if df is not None and not st.session_state.user_data["words"]:
@@ -54,67 +104,80 @@ if "current_batch" not in st.session_state:
     st.session_state.current_batch = []
 if "batch_index" not in st.session_state:
     st.session_state.batch_index = 0
-if "mode" not in st.session_state:
-    st.session_state.mode = "flashcard" # flashcard or quiz
-if "show_meaning" not in st.session_state:
-    st.session_state.show_meaning = False
+if "q_type" not in st.session_state:
+    st.session_state.q_type = "ENG_TO_KOR" # or KOR_TO_ENG
+if "q_options" not in st.session_state:
+    st.session_state.q_options = []
 
-# --- 사이드바: 통계 및 저장/복원 ---
-st.sidebar.title("📊 학습 관리자")
+# --- 사이드바 통계 및 백업 ---
+st.sidebar.title("📊 15일 플랜 달성률")
 
 if df is not None:
-    total_cnt = len(df)
-    mastered_cnt = sum(1 for v in st.session_state.user_data["words"].values() if v["box"] >= 4)
-    progress_pct = (mastered_cnt / total_cnt) * 100
+    total_words = len(df)
+    mastered = sum(1 for v in st.session_state.user_data["words"].values() if v["box"] >= 4)
+    pct = (mastered / total_words) * 100
     
-    st.sidebar.metric("총 완맹 암기율", f"{progress_pct:.1f}%", f"{mastered_cnt}/{total_cnt} 단어")
-    st.sidebar.progress(progress_pct / 100)
+    st.sidebar.metric("15일 전체 목표 달성률", f"{pct:.1f}%", f"{mastered} / {total_words} 단어")
+    st.sidebar.progress(pct / 100)
+    
+    # 15일 일일 목표치 계산 (하루 200단어)
+    today_done = st.session_state.user_data.get("today_completed", 0)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎯 오늘 하루 목표치")
+    st.sidebar.write(f"목표: **200단어** / 완료: **{today_done}단어**")
+    st.sidebar.progress(min(1.0, today_done / 200))
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 진도 보존 (데이터 백업)")
+st.sidebar.subheader("💾 진도 데이터 백업")
+user_json = json.dumps(st.session_state.user_data, ensure_ascii=False, indent=2)
+st.sidebar.download_button("📥 백업 저장", user_json, f"vocab_15days_{datetime.date.today()}.json", "application/json")
 
-# JSON 데이터 다운로드
-user_data_json = json.dumps(st.session_state.user_data, ensure_ascii=False, indent=2)
-st.sidebar.download_button(
-    label="📥 백업 파일 다운로드",
-    data=user_data_json,
-    file_name=f"vocab_backup_{datetime.date.today()}.json",
-    mime="application/json"
-)
-
-# JSON 데이터 업로드
-uploaded_file = st.sidebar.file_uploader("📤 백업 파일 복원하기", type=["json"])
+uploaded_file = st.sidebar.file_uploader("📤 백업 복원", type=["json"])
 if uploaded_file is not None:
-    loaded_data = json.load(uploaded_file)
-    st.session_state.user_data = loaded_data
-    st.sidebar.success("성공적으로 복원되었습니다!")
+    st.session_state.user_data = json.load(uploaded_file)
+    st.sidebar.success("복원되었습니다!")
 
-# --- 메인 화면 ---
-st.title("⚡ 10일 완성 3,000 영단어")
+# --- 메인 인터페이스 ---
+st.title("⚡ 15일 완성 3,000 영단어")
 
 if df is None:
     st.stop()
 
-# 탭 구성
-tab1, tab2, tab3 = st.tabs(["🔥 오늘의 15단어 세션", "🎯 4지선다 퀴즈", "🗂️ 전체/오답 목록"])
+tab1, tab2, tab3 = st.tabs(["🔥 오늘의 15단어 세션", "⚡ 10분 복습 퀴즈", "🗂️ 오답 노트 & 검색"])
+
+# Helper: 문제 생성
+def setup_question(target_word, mode):
+    correct_row = df[df["영단어"] == target_word].iloc[0]
+    if mode == "ENG_TO_KOR":
+        correct_ans = correct_row["뜻"]
+        others = df[df["뜻"] != correct_ans]["뜻"].sample(3).tolist()
+    else:
+        correct_ans = target_word
+        others = df[df["영단어"] != target_word]["영단어"].sample(3).tolist()
+    
+    options = [correct_ans] + others
+    random.shuffle(options)
+    st.session_state.q_options = options
+    st.session_state.q_correct = correct_ans
 
 # ==========================================
-# TAB 1: 오늘의 15단어 마이크로 세션
+# TAB 1: 15단어 세션 (4지선다 + 예문 + 유형 섞기)
 # ==========================================
 with tab1:
     today_str = str(datetime.date.today())
     
-    # 세션이 비어있으면 15개 추출
+    # 미니 세션 배치 준비
     if not st.session_state.current_batch:
         due_words = [
             w for w, data in st.session_state.user_data["words"].items()
             if data["next_review"] <= today_str and data["box"] < 5
         ]
         if due_words:
-            # 복습 우선, 최대 15개
+            # 오답노트/복습 단어 우대 재배치
             st.session_state.current_batch = due_words[:15]
             st.session_state.batch_index = 0
-            st.session_state.show_meaning = False
+            st.session_state.q_type = random.choice(["ENG_TO_KOR", "KOR_TO_ENG"])
+            setup_question(st.session_state.current_batch[0], st.session_state.q_type)
 
     if st.session_state.current_batch:
         idx = st.session_state.batch_index
@@ -122,127 +185,135 @@ with tab1:
             curr_word = st.session_state.current_batch[idx]
             word_info = df[df["영단어"] == curr_word].iloc[0]
             
-            st.caption(f"미니 세션 진행률: {idx + 1} / {len(st.session_state.current_batch)}")
+            st.caption(f"15단어 세션 진행 중: {idx + 1} / {len(st.session_state.current_batch)}")
             st.progress((idx + 1) / len(st.session_state.current_batch))
             
-            # 단어 카드 출력
-            st.markdown(f"### 🔤 **{word_info['영단어']}**")
-            st.write(f"품사: `{word_info['품사']}` | 발음: `{word_info['발음기호']}`")
-            
-            # 발음 듣기 버튼
-            audio_bytes = get_audio_bytes(word_info['영단어'])
+            # 발음 재생
+            audio_bytes = get_audio_bytes(curr_word)
             if audio_bytes:
                 st.audio(audio_bytes, format="audio/mp3")
 
-            st.markdown("---")
+            # 예문 박스
+            st.info(f"💡 **예문:** {word_info['예문']}")
             
-            if not st.session_state.show_meaning:
-                if st.button("👁️ 뜻 확인하기", use_container_width=True):
-                    st.session_state.show_meaning = True
-                    st.rerun()
+            # 문제 모드별 질문 표시
+            if st.session_state.q_type == "ENG_TO_KOR":
+                st.markdown(f"### 🔤 단어: **{curr_word}** `{word_info['발음기호']}`")
+                st.write("👉 올바른 **한글 뜻**을 선택하세요:")
             else:
-                st.success(f"**뜻:** {word_info['뜻']}")
+                st.markdown(f"### 🇰🇷 뜻: **{word_info['뜻']}** (`{word_info['품사']}`)")
+                st.write("👉 알맞은 **영어 단어**를 선택하세요:")
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("⭕ 알고 있음 (다음 단계)", use_container_width=True):
-                        # Box 단계 상승 및 다음 복습일 계산
+            # 4지선다 보기 버튼
+            cols = st.columns(2)
+            for i, option in enumerate(st.session_state.q_options):
+                col = cols[i % 2]
+                if col.button(option, key=f"opt_{idx}_{i}", use_container_width=True):
+                    if option == st.session_state.q_correct:
+                        st.success("🎉 정답입니다!")
+                        # Box 상향 & 일일 목표 카운트 업
                         curr_box = st.session_state.user_data["words"][curr_word]["box"]
-                        new_box = min(5, curr_box + 1)
-                        next_days = [0, 1, 2, 4, 7, 15][new_box]
-                        next_date = str(datetime.date.today() + datetime.timedelta(days=next_days))
-                        
-                        st.session_state.user_data["words"][curr_word]["box"] = new_box
-                        st.session_state.user_data["words"][curr_word]["next_review"] = next_date
+                        st.session_state.user_data["words"][curr_word]["box"] = min(5, curr_box + 1)
+                        st.session_state.user_data["words"][curr_word]["next_review"] = str(datetime.date.today() + datetime.timedelta(days=curr_box * 2))
+                        st.session_state.user_data["today_completed"] = st.session_state.user_data.get("today_completed", 0) + 1
                         
                         st.session_state.batch_index += 1
-                        st.session_state.show_meaning = False
+                        if st.session_state.batch_index < len(st.session_state.current_batch):
+                            next_w = st.session_state.current_batch[st.session_state.batch_index]
+                            st.session_state.q_type = random.choice(["ENG_TO_KOR", "KOR_TO_ENG"])
+                            setup_question(next_w, st.session_state.q_type)
                         st.rerun()
-                with col2:
-                    if st.button("❌ 헷갈림/틀림 (재배치)", use_container_width=True):
-                        # 틀리면 Box 1로 초기화 및 해당 세션 뒤쪽에 재출제 추가
+                    else:
+                        st.error(f"❌ 틀렸습니다! (정답: {st.session_state.q_correct}) -> 오답노트에 추가되어 세션 끝에 다시 풀어봅니다.")
+                        # 틀리면 Box 1로 리셋 & 오답 카운트 상승 & 세션 뒤에 재배치
                         st.session_state.user_data["words"][curr_word]["box"] = 1
                         st.session_state.user_data["words"][curr_word]["wrong_cnt"] += 1
-                        st.session_state.current_batch.append(curr_word) # 세션 뒤에 추가
+                        st.session_state.current_batch.append(curr_word)
                         
                         st.session_state.batch_index += 1
-                        st.session_state.show_meaning = False
+                        if st.session_state.batch_index < len(st.session_state.current_batch):
+                            next_w = st.session_state.current_batch[st.session_state.batch_index]
+                            st.session_state.q_type = random.choice(["ENG_TO_KOR", "KOR_TO_ENG"])
+                            setup_question(next_w, st.session_state.q_type)
                         st.rerun()
         else:
             st.balloons()
-            st.success("🎉 축하합니다! 이번 15단어 마이크로 세션을 완료했습니다.")
-            if st.button("다음 15단어 시작하기", use_container_width=True):
+            st.success("🎉 15단어 미니 세션을 모두 마쳤습니다!")
+            if st.button("다음 15단어 세치 시작하기", use_container_width=True):
                 st.session_state.current_batch = []
                 st.rerun()
     else:
-        st.info("🎈 오늘 복습할 단어를 모두 완료했습니다! '4지선다 퀴즈' 탭에서 실력을 점검해 보세요.")
+        st.info("🎈 오늘 배정된 복습 단어를 모두 마쳤습니다!")
 
 # ==========================================
-# TAB 2: 4지선다 객관식 퀴즈 (Active Recall)
+# TAB 2: 10분 스피드 복습 퀴즈 (타임어택 모드)
 # ==========================================
 with tab2:
-    st.subheader("🎯 능동적 회상 4지선다 퀴즈")
+    st.subheader("⚡ 10분 스피드 복습 퀴즈")
+    st.caption("오늘 학습했거나 헷갈렸던 주요 단어를 빠르게 툭툭 풀고 정리합니다.")
     
-    # 퀴즈용 단어 1개 추출
-    if "quiz_word" not in st.session_state or st.button("새 퀴즈 불러오기"):
-        all_words = list(st.session_state.user_data["words"].keys())
-        st.session_state.quiz_word = random.choice(all_words)
+    if "rev_word" not in st.session_state or st.button("새 복습 문제 불러오기"):
+        # Box 1~2단계 중심 추출
+        review_candidates = [
+            w for w, data in st.session_state.user_data["words"].items()
+            if data["box"] <= 2 or data["wrong_cnt"] > 0
+        ]
+        if not review_candidates:
+            review_candidates = list(st.session_state.user_data["words"].keys())
+            
+        st.session_state.rev_word = random.choice(review_candidates)
+        r_info = df[df["영단어"] == st.session_state.rev_word].iloc[0]
         
-        correct_info = df[df["영단어"] == st.session_state.quiz_word].iloc[0]
-        correct_meaning = correct_info["뜻"]
-        
-        # 오답 보기 3개 추출
-        other_meanings = df[df["뜻"] != correct_meaning]["뜻"].sample(3).tolist()
-        options = [correct_meaning] + other_meanings
-        random.shuffle(options)
-        
-        st.session_state.quiz_options = options
-        st.session_state.quiz_correct = correct_meaning
-        st.session_state.quiz_answered = False
+        others = df[df["뜻"] != r_info["뜻"]]["뜻"].sample(3).tolist()
+        opts = [r_info["뜻"]] + others
+        random.shuffle(opts)
+        st.session_state.rev_opts = opts
+        st.session_state.rev_correct = r_info["뜻"]
 
-    q_word = st.session_state.quiz_word
-    q_info = df[df["영단어"] == q_word].iloc[0]
+    r_target = st.session_state.rev_word
+    r_row = df[df["영단어"] == r_target].iloc[0]
     
-    st.markdown(f"### 단어: **{q_word}**  `{q_info['발음기호']}`")
+    st.markdown(f"### 🔤 **{r_target}** `{r_row['발음기호']}`")
+    st.info(f"💡 예문: {r_row['예문']}")
     
-    user_choice = st.radio("올바른 뜻을 선택하세요:", st.session_state.quiz_options)
+    selected = st.radio("알맞은 뜻을 고르세요:", st.session_state.rev_opts, key="rev_radio")
     
     if st.button("정답 확인", use_container_width=True):
-        st.session_state.quiz_answered = True
-        if user_choice == st.session_state.quiz_correct:
+        if selected == st.session_state.rev_correct:
             st.success("🎉 정답입니다!")
-            # Box 단계 약간 상승
-            curr_box = st.session_state.user_data["words"][q_word]["box"]
-            st.session_state.user_data["words"][q_word]["box"] = min(5, curr_box + 1)
+            st.session_state.user_data["words"][r_target]["box"] = min(5, st.session_state.user_data["words"][r_target]["box"] + 1)
         else:
-            st.error(f"❌ 틀렸습니다. 정답은 **'{st.session_state.quiz_correct}'** 입니다.")
-            st.session_state.user_data["words"][q_word]["box"] = 1
+            st.error(f"❌ 틀렸습니다! 정답: **{st.session_state.rev_correct}**")
+            st.session_state.user_data["words"][r_target]["box"] = 1
+            st.session_state.user_data["words"][r_target]["wrong_cnt"] += 1
 
 # ==========================================
-# TAB 3: 오답 노트 및 검색
+# TAB 3: 오답 노트 & 검색
 # ==========================================
 with tab3:
-    st.subheader("🗂️ 단어 검색 및 오답 관리")
+    st.subheader("🗂️ 오답 노트 (틀린 횟수순 정렬)")
     
-    search_term = st.text_input("단어 또는 뜻 검색", "")
-    
-    # 틀린 횟수가 많은 순으로 단어 정렬
-    sorted_words = sorted(
+    # 오답 정렬
+    wrong_sorted = sorted(
         st.session_state.user_data["words"].items(),
         key=lambda x: x[1]["wrong_cnt"],
         reverse=True
     )
     
-    list_data = []
-    for word, stats in sorted_words:
-        row = df[df["영단어"] == word].iloc[0]
-        if search_term.lower() in word.lower() or search_term in row["뜻"]:
-            list_data.append({
+    wrong_list = []
+    for word, stats in wrong_sorted:
+        if stats["wrong_cnt"] > 0 or stats["box"] == 1:
+            row = df[df["영단어"] == word].iloc[0]
+            wrong_list.append({
                 "영단어": word,
                 "뜻": row["뜻"],
                 "품사": row["품사"],
                 "암기단계": f"Box {stats['box']}",
-                "틀린 횟수": stats["wrong_cnt"]
+                "틀린 횟수": stats["wrong_cnt"],
+                "다음 복습일": stats["next_review"]
             })
             
-    st.dataframe(pd.DataFrame(list_data), use_container_width=True)
+    if wrong_list:
+        st.dataframe(pd.DataFrame(wrong_list), use_container_width=True)
+    else:
+        st.success("🎉 현재 오답 노트가 비어있습니다. 완벽합니다!")
