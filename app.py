@@ -54,7 +54,26 @@ mins = (total_sec % 3600) // 60
 secs = total_sec % 60
 study_time_display = f"{hrs}시간 {mins}분 {secs}초" if hrs > 0 else f"{mins}분 {secs}초"
 
-# --- 4. 기본 3,000 단어장 데이터 로드 및 전처리 ---
+# --- 4. 30분 주기 데이터 저장 안내 모달 팝업 ---
+@st.dialog("⏱️ 30분 학습 완료! 진도를 저장하세요")
+def show_30min_save_dialog(completed_mins):
+    st.write(f"🎉 **축하합니다! 열공하여 연속 {completed_mins}분 동안 공부하셨습니다.**")
+    st.info("💡 서버 재시작에 대비해 지금까지 쌓인 학습 진도(숙달도, 오답노트)를 파일로 저장해 두세요!")
+
+    json_progress = json.dumps(st.session_state.user_progress, ensure_ascii=False, indent=2)
+    st.download_button(
+        label="📥 지금 내 진도 저장하기 (.json)",
+        data=json_progress,
+        file_name=f"vocab_progress_{today_date_str}_{completed_mins}min.json",
+        mime="application/json",
+        key="modal_download_btn",
+        use_container_width=True
+    )
+    st.write("")
+    if st.button("닫고 계속 공부하기", use_container_width=True, key="close_modal_btn"):
+        st.rerun()
+
+# --- 5. 기본 3,000 단어장 데이터 로드 및 전처리 ---
 VOCAB_FILE = "English_3000_Words.xlsx"
 USER_DATA_FILE = "user_progress_3000.json"
 
@@ -85,7 +104,7 @@ def load_base_vocab():
 
 df_base = load_base_vocab()
 
-# --- 5. 사용자 진도 데이터 저장/복원 함수 ---
+# --- 6. 사용자 진도 데이터 저장/복원 함수 ---
 def load_user_progress():
     if os.path.exists(USER_DATA_FILE):
         try:
@@ -130,9 +149,17 @@ def sync_and_save_word(word, level, correct_inc=0, wrong_inc=0):
     }
     save_user_progress(st.session_state.user_progress)
 
-# --- 6. 텍스트 동적 처리 헬퍼 함수 4종 ---
+# 30분(1,800초) 감지 모달 팝업 트리거
+current_30min_interval = total_sec // 1800
+if "shown_save_interval" not in st.session_state:
+    st.session_state.shown_save_interval = 0
 
-# 1) 퀴즈용: 영문 예문에 타겟 단어를 원형 그대로 노출 (볼드 처리)
+if current_30min_interval > st.session_state.shown_save_interval and current_30min_interval > 0:
+    st.session_state.shown_save_interval = current_30min_interval
+    show_30min_save_dialog(current_30min_interval * 30)
+
+# --- 7. 텍스트 동적 처리 헬퍼 함수 4종 ---
+
 def get_full_english_sentence(sentence, target_word):
     if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
         return "등록된 예문이 없습니다."
@@ -143,7 +170,6 @@ def get_full_english_sentence(sentence, target_word):
         return pattern.sub(r'**\1**', sentence)
     return f"{sentence} (**{target_word}**)"
 
-# 2) 예문 암기용: 영문 예문의 타겟 단어 위치를 빈칸 처리
 def get_blanked_english_sentence(sentence, target_word):
     if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
         return "등록된 예문이 없습니다."
@@ -154,7 +180,6 @@ def get_blanked_english_sentence(sentence, target_word):
         return pattern.sub("✏️ [ ______ ]", sentence)
     return f"{sentence} ✏️ [ ______ ]"
 
-# 3) 예문 암기 및 정답 공개용: 한글 뜻이 100% 채워진 완전한 해석
 def get_full_korean_translation(trans_sentence, kor_meaning):
     if not trans_sentence or trans_sentence in ["예문 없음", "예문 번역 없음", "-"]:
         return ""
@@ -162,7 +187,6 @@ def get_full_korean_translation(trans_sentence, kor_meaning):
         return trans_sentence.replace("___", f"**{kor_meaning}**")
     return trans_sentence
 
-# 4) 퀴즈 힌트용: 한글 해석의 단어 뜻 자리를 빈칸 처리
 def get_blanked_korean_translation(trans_sentence, kor_meaning):
     if not trans_sentence or trans_sentence in ["예문 없음", "예문 번역 없음", "-"]:
         return ""
@@ -172,7 +196,7 @@ def get_blanked_korean_translation(trans_sentence, kor_meaning):
         return trans_sentence.replace(kor_meaning, "✏️ [ ______ ]")
     return trans_sentence
 
-# --- 7. UI 기본 설정 ---
+# --- 8. UI 기본 설정 ---
 st.set_page_config(page_title="3000 단어 마스터 프로그램", layout="wide")
 
 st.markdown("""
@@ -192,7 +216,7 @@ st.markdown("### ⚡ 3,000 영단어 마스터 프로그램")
 if df_base is None:
     st.stop()
 
-# --- 8. 사이드바 학습 보드 & 데이터 관리 ---
+# --- 9. 사이드바 학습 보드 & 데이터 관리 ---
 with st.sidebar:
     st.header("📈 학습 통계 보드")
     
@@ -230,7 +254,7 @@ with st.sidebar:
         except Exception:
             st.error("올바른 백업 JSON 파일이 아닙니다.")
 
-# --- 9. 메인 학습 탭 구성 ---
+# --- 10. 메인 학습 탭 구성 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📚 단어장 사전", 
     "🧠 4지선다 퀴즈", 
@@ -291,7 +315,6 @@ with tab2:
         word_audio = get_audio_bytes(target_word)
         if word_audio: st.audio(word_audio, format="audio/mp3")
         
-        # 영문 예문은 완전히 보여주고, 한글 해석의 단어 뜻만 빈칸 처리하여 힌트 제공
         st.markdown(f"> 💡 **영문 예문 힌트:** \"{get_full_english_sentence(example_sent, target_word)}\"")
         if example_trans and example_trans != "예문 없음":
             if not st.session_state.get('q_answered', False):
