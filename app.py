@@ -130,20 +130,47 @@ def sync_and_save_word(word, level, correct_inc=0, wrong_inc=0):
     }
     save_user_progress(st.session_state.user_progress)
 
-# --- 6. 텍스트 강조 및 빈칸 처리 헬퍼 함수 ---
-# 퀴즈용: 단어를 그대로 보여주며 강조 (힌트로 활용)
-def highlight_target_word(sentence, target_word):
-    if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
-        return "등록된 예문이 없습니다."
-    pattern = re.compile(r'\b(' + re.escape(target_word) + r')\b', re.IGNORECASE)
-    return pattern.sub(r'**\1**', sentence)
+# --- 6. 텍스트 동적 처리 헬퍼 함수 4종 ---
 
-# 예문 암기용: 영문 문장에서 단어 부분만 빈칸 처리
-def make_blank_sentence(sentence, target_word):
+# 1) 퀴즈용: 영문 예문에 타겟 단어를 원형 그대로 노출 (볼드 처리)
+def get_full_english_sentence(sentence, target_word):
     if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
         return "등록된 예문이 없습니다."
-    pattern = re.compile(r'\b' + re.escape(target_word) + r'\b', re.IGNORECASE)
-    return pattern.sub("✏️ [ ______ ]", sentence)
+    if "___" in sentence:
+        return sentence.replace("___", f"**{target_word}**")
+    pattern = re.compile(r'\b(' + re.escape(target_word) + r')\b', re.IGNORECASE)
+    if pattern.search(sentence):
+        return pattern.sub(r'**\1**', sentence)
+    return f"{sentence} (**{target_word}**)"
+
+# 2) 예문 암기용: 영문 예문의 타겟 단어 위치를 빈칸 처리
+def get_blanked_english_sentence(sentence, target_word):
+    if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
+        return "등록된 예문이 없습니다."
+    if "___" in sentence:
+        return sentence.replace("___", "✏️ [ ______ ]")
+    pattern = re.compile(r'\b(' + re.escape(target_word) + r')\b', re.IGNORECASE)
+    if pattern.search(sentence):
+        return pattern.sub("✏️ [ ______ ]", sentence)
+    return f"{sentence} ✏️ [ ______ ]"
+
+# 3) 예문 암기 및 정답 공개용: 한글 뜻이 100% 채워진 완전한 해석
+def get_full_korean_translation(trans_sentence, kor_meaning):
+    if not trans_sentence or trans_sentence in ["예문 없음", "예문 번역 없음", "-"]:
+        return ""
+    if "___" in trans_sentence:
+        return trans_sentence.replace("___", f"**{kor_meaning}**")
+    return trans_sentence
+
+# 4) 퀴즈 힌트용: 한글 해석의 단어 뜻 자리를 빈칸 처리
+def get_blanked_korean_translation(trans_sentence, kor_meaning):
+    if not trans_sentence or trans_sentence in ["예문 없음", "예문 번역 없음", "-"]:
+        return ""
+    if "___" in trans_sentence:
+        return trans_sentence.replace("___", "✏️ [ ______ ]")
+    if kor_meaning and kor_meaning in trans_sentence:
+        return trans_sentence.replace(kor_meaning, "✏️ [ ______ ]")
+    return trans_sentence
 
 # --- 7. UI 기본 설정 ---
 st.set_page_config(page_title="3000 단어 마스터 프로그램", layout="wide")
@@ -264,10 +291,13 @@ with tab2:
         word_audio = get_audio_bytes(target_word)
         if word_audio: st.audio(word_audio, format="audio/mp3")
         
-        # 힌트용: 단어를 그대로 보여주는 문장 및 완전한 한글 번역
-        st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_sent, target_word)}\"")
+        # 영문 예문은 완전히 보여주고, 한글 해석의 단어 뜻만 빈칸 처리하여 힌트 제공
+        st.markdown(f"> 💡 **영문 예문 힌트:** \"{get_full_english_sentence(example_sent, target_word)}\"")
         if example_trans and example_trans != "예문 없음":
-            st.markdown(f"> 💬 **해석:** \"{example_trans}\"")
+            if not st.session_state.get('q_answered', False):
+                st.markdown(f"> 💬 **한글 해석 힌트:** \"{get_blanked_korean_translation(example_trans, correct_ans)}\"")
+            else:
+                st.markdown(f"> 💬 **전체 해석:** \"{get_full_korean_translation(example_trans, correct_ans)}\"")
 
         if 'q_curr_opts' not in st.session_state or st.session_state.get('q_opts_word') != target_word:
             all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_ans})
@@ -344,9 +374,12 @@ with tab3:
                 w_audio = get_audio_bytes(target_w)
                 if w_audio: st.audio(w_audio, format="audio/mp3")
 
-                st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_w, target_w)}\"")
+                st.markdown(f"> 💡 **영문 예문 힌트:** \"{get_full_english_sentence(example_w, target_w)}\"")
                 if example_trans_w and example_trans_w != "예문 없음":
-                    st.markdown(f"> 💬 **해석:** \"{example_trans_w}\"")
+                    if not st.session_state.get('w_answered', False):
+                        st.markdown(f"> 💬 **한글 해석 힌트:** \"{get_blanked_korean_translation(example_trans_w, correct_w)}\"")
+                    else:
+                        st.markdown(f"> 💬 **전체 해석:** \"{get_full_korean_translation(example_trans_w, correct_w)}\"")
                 
                 if 'w_curr_opts' not in st.session_state or st.session_state.get('w_opts_word') != target_w:
                     all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_w})
@@ -417,9 +450,12 @@ with tab4:
     rev_audio = get_audio_bytes(target_word)
     if rev_audio: st.audio(rev_audio, format="audio/mp3")
 
-    st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_s, target_word)}\"")
+    st.markdown(f"> 💡 **영문 예문 힌트:** \"{get_full_english_sentence(example_s, target_word)}\"")
     if example_trans_s and example_trans_s != "예문 없음":
-        st.markdown(f"> 💬 **해석:** \"{example_trans_s}\"")
+        if not st.session_state.get('rev_answered', False):
+            st.markdown(f"> 💬 **한글 해석 힌트:** \"{get_blanked_korean_translation(example_trans_s, correct_ans)}\"")
+        else:
+            st.markdown(f"> 💬 **전체 해석:** \"{get_full_korean_translation(example_trans_s, correct_ans)}\"")
 
     if 'rev_curr_opts' not in st.session_state or st.session_state.get('rev_opts_word') != target_word:
         all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_ans})
@@ -501,15 +537,17 @@ with tab5:
                 target_w = str(s_row['영어 단어']).strip()
                 full_sent = s_row['예문']
                 trans_sent = s_row['예문 번역']
+                kor_meaning = s_row.get('대표 뜻', '')
                 
-                # 완전한 한글 해석 제공 + 영문 예문의 단어 자리만 빈칸 처리
-                blanked_sent = make_blank_sentence(full_sent, target_w)
+                # 100% 완전한 한글 해석 제공 + 영문 예문의 단어만 빈칸 처리
+                blanked_sent = get_blanked_english_sentence(full_sent, target_w)
+                full_trans = get_full_korean_translation(trans_sent, kor_meaning)
                 
                 st.progress((st.session_state.sent_idx) / total_sent)
                 st.caption(f"예문 {st.session_state.sent_idx + 1} / {total_sent}")
                 
-                st.info(f"💬 **전체 해석:** {trans_sent}")
-                st.warning(f"📝 **영문 예문:** {blanked_sent}")
+                st.info(f"💬 **한글 전체 해석:** {full_trans}")
+                st.warning(f"📝 **영문 빈칸 예문:** {blanked_sent}")
                 
                 if not st.session_state.get('sent_answered', False):
                     with st.form(key=f"sent_quiz_form_{st.session_state.sent_idx}"):
@@ -535,7 +573,7 @@ with tab5:
                     else:
                         st.error(f"❌ 틀렸습니다. 입력한 답: '{u_in}' ➔ **정답: '{target_w}'**")
                         
-                    st.markdown(f"> 👉 **전체 완성 문장:** {highlight_target_word(full_sent, target_w)}")
+                    st.markdown(f"> 👉 **전체 완성 문장:** {get_full_english_sentence(full_sent, target_w)}")
                     
                     sent_audio = get_audio_bytes(full_sent)
                     if sent_audio:
@@ -557,9 +595,11 @@ with tab5:
         else:
             for i, row in sentence_df.iterrows():
                 meaning = row.get('대표 뜻', '')
+                full_trans = get_full_korean_translation(row['예문 번역'], meaning)
+                full_eng = get_full_english_sentence(row['예문'], row['영어 단어'])
                 
-                with st.expander(f"{i+1}. 💬 {row['예문 번역']}"):
-                    st.markdown(f"**영어:** {highlight_target_word(row['예문'], row['영어 단어'])}")
+                with st.expander(f"{i+1}. 💬 {full_trans}"):
+                    st.markdown(f"**영어:** {full_eng}")
                     st.caption(f"단어: **{row['영어 단어']}** `{row['발음기호']}` | 뜻: **{meaning}**")
                     
                     card_audio = get_audio_bytes(row['예문'])
