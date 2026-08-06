@@ -1,4 +1,8 @@
 streamlit
 pandas
 openpyxl
+nltk
+pypdf
+deep-translator
+eng-to-ipa
 gTTS
