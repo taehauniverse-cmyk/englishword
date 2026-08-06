@@ -10,56 +10,6 @@ from gtts import gTTS
 # --- 페이지 설정 ---
 st.set_page_config(page_title="15일 완성 3000 단어장", page_icon="⚡", layout="centered")
 
-# --- 1. 화면 이탈 시 일시정지되는 실시간 접속 시간 타이머 (JS) ---
-timer_html = """
-<div id="study-timer" style="
-    position: fixed;
-    bottom: 15px;
-    right: 15px;
-    background: rgba(15, 23, 42, 0.85);
-    color: #38bdf8;
-    padding: 8px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: bold;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    z-index: 99999;
-    font-family: system-ui, -apple-system, sans-serif;
-    backdrop-filter: blur(4px);
-    border: 1px solid rgba(56, 189, 248, 0.3);
-">
-    ⏱️ 학습 시간: <span id="timer-display">00:00:00</span>
-</div>
-
-<script>
-(function() {
-    let activeSeconds = parseInt(localStorage.getItem('user_active_seconds') || '0');
-    let isVisible = !document.hidden;
-
-    document.addEventListener('visibilitychange', function() {
-        isVisible = !document.hidden;
-    });
-
-    setInterval(function() {
-        if (isVisible) {
-            activeSeconds++;
-            localStorage.setItem('user_active_seconds', activeSeconds);
-            
-            let hrs = String(Math.floor(activeSeconds / 3600)).padStart(2, '0');
-            let mins = String(Math.floor((activeSeconds % 3600) / 60)).padStart(2, '0');
-            let secs = String(activeSeconds % 60).padStart(2, '0');
-            
-            let display = document.getElementById('timer-display');
-            if (display) {
-                display.innerText = hrs + ":" + mins + ":" + secs;
-            }
-        }
-    }, 1000);
-})();
-</script>
-"""
-components.html(timer_html, height=0)
-
 # --- 원어민 발음 (gTTS) ---
 @st.cache_data
 def get_audio_bytes(text):
@@ -83,6 +33,54 @@ def load_vocab_data():
 
 df = load_vocab_data()
 
+# --- 사이드바: 실시간 접속 시간 타이머 (이탈 시 자동 정지) ---
+with st.sidebar:
+    st.subheader("⏱️ 순수 학습 시간")
+    timer_html = """
+    <div style="
+        background: #0f172a;
+        color: #38bdf8;
+        padding: 12px;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: bold;
+        text-align: center;
+        border: 1px solid #38bdf8;
+        font-family: system-ui, -apple-system, sans-serif;
+    ">
+        현재 세션 접속<br>
+        <span id="timer-display" style="font-size: 22px; color: #ffffff;">00:00:00</span>
+    </div>
+
+    <script>
+    (function() {
+        let activeSeconds = parseInt(localStorage.getItem('user_active_seconds') || '0');
+        let isVisible = !document.hidden;
+
+        document.addEventListener('visibilitychange', function() {
+            isVisible = !document.hidden;
+        });
+
+        setInterval(function() {
+            if (isVisible) {
+                activeSeconds++;
+                localStorage.setItem('user_active_seconds', activeSeconds);
+                
+                let hrs = String(Math.floor(activeSeconds / 3600)).padStart(2, '0');
+                let mins = String(Math.floor((activeSeconds % 3600) / 60)).padStart(2, '0');
+                let secs = String(activeSeconds % 60).padStart(2, '0');
+                
+                let display = document.getElementById('timer-display');
+                if (display) {
+                    display.innerText = hrs + ":" + mins + ":" + secs;
+                }
+            }
+        }, 1000);
+    })();
+    </script>
+    """
+    components.html(timer_html, height=85)
+
 # --- 사용자 상태 초기화 ---
 if "user_data" not in st.session_state:
     st.session_state.user_data = {
@@ -105,7 +103,7 @@ if "current_batch" not in st.session_state:
 if "batch_index" not in st.session_state:
     st.session_state.batch_index = 0
 if "q_type" not in st.session_state:
-    st.session_state.q_type = "ENG_TO_KOR" # or KOR_TO_ENG
+    st.session_state.q_type = "ENG_TO_KOR"
 if "q_options" not in st.session_state:
     st.session_state.q_options = []
 
@@ -120,7 +118,6 @@ if df is not None:
     st.sidebar.metric("15일 전체 목표 달성률", f"{pct:.1f}%", f"{mastered} / {total_words} 단어")
     st.sidebar.progress(pct / 100)
     
-    # 15일 일일 목표치 계산 (하루 200단어)
     today_done = st.session_state.user_data.get("today_completed", 0)
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎯 오늘 하루 목표치")
@@ -145,7 +142,6 @@ if df is None:
 
 tab1, tab2, tab3 = st.tabs(["🔥 오늘의 15단어 세션", "⚡ 10분 복습 퀴즈", "🗂️ 오답 노트 & 검색"])
 
-# Helper: 문제 생성
 def setup_question(target_word, mode):
     correct_row = df[df["영단어"] == target_word].iloc[0]
     if mode == "ENG_TO_KOR":
@@ -161,19 +157,17 @@ def setup_question(target_word, mode):
     st.session_state.q_correct = correct_ans
 
 # ==========================================
-# TAB 1: 15단어 세션 (4지선다 + 예문 + 유형 섞기)
+# TAB 1: 15단어 세션 (예문 + 한글 해석)
 # ==========================================
 with tab1:
     today_str = str(datetime.date.today())
     
-    # 미니 세션 배치 준비
     if not st.session_state.current_batch:
         due_words = [
             w for w, data in st.session_state.user_data["words"].items()
             if data["next_review"] <= today_str and data["box"] < 5
         ]
         if due_words:
-            # 오답노트/복습 단어 우대 재배치
             st.session_state.current_batch = due_words[:15]
             st.session_state.batch_index = 0
             st.session_state.q_type = random.choice(["ENG_TO_KOR", "KOR_TO_ENG"])
@@ -188,15 +182,14 @@ with tab1:
             st.caption(f"15단어 세션 진행 중: {idx + 1} / {len(st.session_state.current_batch)}")
             st.progress((idx + 1) / len(st.session_state.current_batch))
             
-            # 발음 재생
             audio_bytes = get_audio_bytes(curr_word)
             if audio_bytes:
                 st.audio(audio_bytes, format="audio/mp3")
 
-            # 예문 박스
-            st.info(f"💡 **예문:** {word_info['예문']}")
+            # 예문 및 한글 해석 함께 표시
+            ex_trans = word_info.get("예문_번역", "")
+            st.info(f"💡 **예문:** {word_info['예문']}\n\n💬 **해석:** {ex_trans}")
             
-            # 문제 모드별 질문 표시
             if st.session_state.q_type == "ENG_TO_KOR":
                 st.markdown(f"### 🔤 단어: **{curr_word}** `{word_info['발음기호']}`")
                 st.write("👉 올바른 **한글 뜻**을 선택하세요:")
@@ -204,14 +197,12 @@ with tab1:
                 st.markdown(f"### 🇰🇷 뜻: **{word_info['뜻']}** (`{word_info['품사']}`)")
                 st.write("👉 알맞은 **영어 단어**를 선택하세요:")
                 
-            # 4지선다 보기 버튼
             cols = st.columns(2)
             for i, option in enumerate(st.session_state.q_options):
                 col = cols[i % 2]
                 if col.button(option, key=f"opt_{idx}_{i}", use_container_width=True):
                     if option == st.session_state.q_correct:
                         st.success("🎉 정답입니다!")
-                        # Box 상향 & 일일 목표 카운트 업
                         curr_box = st.session_state.user_data["words"][curr_word]["box"]
                         st.session_state.user_data["words"][curr_word]["box"] = min(5, curr_box + 1)
                         st.session_state.user_data["words"][curr_word]["next_review"] = str(datetime.date.today() + datetime.timedelta(days=curr_box * 2))
@@ -224,8 +215,7 @@ with tab1:
                             setup_question(next_w, st.session_state.q_type)
                         st.rerun()
                     else:
-                        st.error(f"❌ 틀렸습니다! (정답: {st.session_state.q_correct}) -> 오답노트에 추가되어 세션 끝에 다시 풀어봅니다.")
-                        # 틀리면 Box 1로 리셋 & 오답 카운트 상승 & 세션 뒤에 재배치
+                        st.error(f"❌ 틀렸습니다! (정답: {st.session_state.q_correct}) -> 오답노트에 자동 추가됩니다.")
                         st.session_state.user_data["words"][curr_word]["box"] = 1
                         st.session_state.user_data["words"][curr_word]["wrong_cnt"] += 1
                         st.session_state.current_batch.append(curr_word)
@@ -239,21 +229,20 @@ with tab1:
         else:
             st.balloons()
             st.success("🎉 15단어 미니 세션을 모두 마쳤습니다!")
-            if st.button("다음 15단어 세치 시작하기", use_container_width=True):
+            if st.button("다음 15단어 세션 시작하기", use_container_width=True):
                 st.session_state.current_batch = []
                 st.rerun()
     else:
         st.info("🎈 오늘 배정된 복습 단어를 모두 마쳤습니다!")
 
 # ==========================================
-# TAB 2: 10분 스피드 복습 퀴즈 (타임어택 모드)
+# TAB 2: 10분 스피드 복습 퀴즈
 # ==========================================
 with tab2:
     st.subheader("⚡ 10분 스피드 복습 퀴즈")
-    st.caption("오늘 학습했거나 헷갈렸던 주요 단어를 빠르게 툭툭 풀고 정리합니다.")
+    st.caption("주요 단어를 복습하고 툭툭 풀어봅니다.")
     
     if "rev_word" not in st.session_state or st.button("새 복습 문제 불러오기"):
-        # Box 1~2단계 중심 추출
         review_candidates = [
             w for w, data in st.session_state.user_data["words"].items()
             if data["box"] <= 2 or data["wrong_cnt"] > 0
@@ -274,7 +263,7 @@ with tab2:
     r_row = df[df["영단어"] == r_target].iloc[0]
     
     st.markdown(f"### 🔤 **{r_target}** `{r_row['발음기호']}`")
-    st.info(f"💡 예문: {r_row['예문']}")
+    st.info(f"💡 예문: {r_row['예문']}\n\n💬 해석: {r_row.get('예문_번역', '')}")
     
     selected = st.radio("알맞은 뜻을 고르세요:", st.session_state.rev_opts, key="rev_radio")
     
@@ -288,12 +277,11 @@ with tab2:
             st.session_state.user_data["words"][r_target]["wrong_cnt"] += 1
 
 # ==========================================
-# TAB 3: 오답 노트 & 검색
+# TAB 3: 오답 노트
 # ==========================================
 with tab3:
-    st.subheader("🗂️ 오답 노트 (틀린 횟수순 정렬)")
+    st.subheader("🗂️ 오답 노트")
     
-    # 오답 정렬
     wrong_sorted = sorted(
         st.session_state.user_data["words"].items(),
         key=lambda x: x[1]["wrong_cnt"],
@@ -316,4 +304,4 @@ with tab3:
     if wrong_list:
         st.dataframe(pd.DataFrame(wrong_list), use_container_width=True)
     else:
-        st.success("🎉 현재 오답 노트가 비어있습니다. 완벽합니다!")
+        st.success("🎉 현재 오답 노트가 비어있습니다!")
