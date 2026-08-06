@@ -63,7 +63,6 @@ def load_base_vocab():
     if os.path.exists(VOCAB_FILE):
         df = pd.read_excel(VOCAB_FILE)
         
-        # 컬럼 이름 맞춤 처리
         rename_map = {
             "영단어": "영어 단어",
             "뜻": "대표 뜻",
@@ -71,7 +70,6 @@ def load_base_vocab():
         }
         df.rename(columns=rename_map, inplace=True)
         
-        # 필수 컬럼 보장
         for col in ["발음기호", "품사", "예문", "예문 번역"]:
             if col not in df.columns:
                 df[col] = "-" if col == "발음기호" else ("기타" if col == "품사" else "예문 없음")
@@ -133,13 +131,17 @@ def sync_and_save_word(word, level, correct_inc=0, wrong_inc=0):
     save_user_progress(st.session_state.user_progress)
 
 # --- 6. 텍스트 강조 및 빈칸 처리 헬퍼 함수 ---
+# 퀴즈용: 단어를 그대로 보여주며 강조 (힌트로 활용)
 def highlight_target_word(sentence, target_word):
     if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
         return "등록된 예문이 없습니다."
     pattern = re.compile(r'\b(' + re.escape(target_word) + r')\b', re.IGNORECASE)
     return pattern.sub(r'**\1**', sentence)
 
+# 예문 암기용: 영문 문장에서 단어 부분만 빈칸 처리
 def make_blank_sentence(sentence, target_word):
+    if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
+        return "등록된 예문이 없습니다."
     pattern = re.compile(r'\b' + re.escape(target_word) + r'\b', re.IGNORECASE)
     return pattern.sub("✏️ [ ______ ]", sentence)
 
@@ -262,7 +264,8 @@ with tab2:
         word_audio = get_audio_bytes(target_word)
         if word_audio: st.audio(word_audio, format="audio/mp3")
         
-        st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_sent, target_word)}\"")
+        # 힌트용: 단어를 그대로 보여주는 문장 및 완전한 한글 번역
+        st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_sent, target_word)}\"")
         if example_trans and example_trans != "예문 없음":
             st.markdown(f"> 💬 **해석:** \"{example_trans}\"")
 
@@ -341,7 +344,7 @@ with tab3:
                 w_audio = get_audio_bytes(target_w)
                 if w_audio: st.audio(w_audio, format="audio/mp3")
 
-                st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_w, target_w)}\"")
+                st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_w, target_w)}\"")
                 if example_trans_w and example_trans_w != "예문 없음":
                     st.markdown(f"> 💬 **해석:** \"{example_trans_w}\"")
                 
@@ -414,7 +417,7 @@ with tab4:
     rev_audio = get_audio_bytes(target_word)
     if rev_audio: st.audio(rev_audio, format="audio/mp3")
 
-    st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_s, target_word)}\"")
+    st.markdown(f"> 💡 **예문 힌트:** \"{highlight_target_word(example_s, target_word)}\"")
     if example_trans_s and example_trans_s != "예문 없음":
         st.markdown(f"> 💬 **해석:** \"{example_trans_s}\"")
 
@@ -498,13 +501,15 @@ with tab5:
                 target_w = str(s_row['영어 단어']).strip()
                 full_sent = s_row['예문']
                 trans_sent = s_row['예문 번역']
+                
+                # 완전한 한글 해석 제공 + 영문 예문의 단어 자리만 빈칸 처리
                 blanked_sent = make_blank_sentence(full_sent, target_w)
                 
                 st.progress((st.session_state.sent_idx) / total_sent)
                 st.caption(f"예문 {st.session_state.sent_idx + 1} / {total_sent}")
                 
-                st.info(f"💡 **해석:** {trans_sent}")
-                st.warning(f"📝 **문장:** {blanked_sent}")
+                st.info(f"💬 **전체 해석:** {trans_sent}")
+                st.warning(f"📝 **영문 예문:** {blanked_sent}")
                 
                 if not st.session_state.get('sent_answered', False):
                     with st.form(key=f"sent_quiz_form_{st.session_state.sent_idx}"):
@@ -530,7 +535,7 @@ with tab5:
                     else:
                         st.error(f"❌ 틀렸습니다. 입력한 답: '{u_in}' ➔ **정답: '{target_w}'**")
                         
-                    st.markdown(f"> 👉 **전체 문장:** {highlight_target_word(full_sent, target_w)}")
+                    st.markdown(f"> 👉 **전체 완성 문장:** {highlight_target_word(full_sent, target_w)}")
                     
                     sent_audio = get_audio_bytes(full_sent)
                     if sent_audio:
@@ -553,7 +558,7 @@ with tab5:
             for i, row in sentence_df.iterrows():
                 meaning = row.get('대표 뜻', '')
                 
-                with st.expander(f"{i+1}. 💡 {row['예문 번역']}"):
+                with st.expander(f"{i+1}. 💬 {row['예문 번역']}"):
                     st.markdown(f"**영어:** {highlight_target_word(row['예문'], row['영어 단어'])}")
                     st.caption(f"단어: **{row['영어 단어']}** `{row['발음기호']}` | 뜻: **{meaning}**")
                     
