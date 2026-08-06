@@ -63,16 +63,18 @@ def load_base_vocab():
     if os.path.exists(VOCAB_FILE):
         df = pd.read_excel(VOCAB_FILE)
         
-        # 컬럼 표준화 처리
-        if "영단어" in df.columns:
-            df.rename(columns={"영단어": "영어 단어"}, inplace=True)
-        if "뜻" in df.columns and "대본 문맥 뜻" not in df.columns:
-            df["대본 문맥 뜻"] = df["뜻"]
-            df["사전 대표 뜻"] = df["뜻"]
-            
-        for col in ["발음기호", "대본 예문", "대본 예문 번역"]:
+        # 컬럼 이름 맞춤 처리
+        rename_map = {
+            "영단어": "영어 단어",
+            "뜻": "대표 뜻",
+            "예문_번역": "예문 번역"
+        }
+        df.rename(columns=rename_map, inplace=True)
+        
+        # 필수 컬럼 보장
+        for col in ["발음기호", "품사", "예문", "예문 번역"]:
             if col not in df.columns:
-                df[col] = "-" if col == "발음기호" else "예문 없음"
+                df[col] = "-" if col == "발음기호" else ("기타" if col == "품사" else "예문 없음")
                 
         for col, default_val in [("숙달도", 1), ("틀린 횟수", 0), ("맞춘 횟수", 0)]:
             if col not in df.columns:
@@ -80,7 +82,7 @@ def load_base_vocab():
                 
         return df
     else:
-        st.error(f"⚠️ '{VOCAB_FILE}' 파일을 찾을 수 없습니다. 저장소에 엑셀 파일을 넣어주세요.")
+        st.error(f"⚠️ '{VOCAB_FILE}' 파일을 찾을 수 없습니다. 저장소에 엑셀 파일을 올려주세요.")
         return None
 
 df_base = load_base_vocab()
@@ -99,7 +101,6 @@ def save_user_progress(progress_data):
     with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(progress_data, f, ensure_ascii=False, indent=2)
 
-# 세션 내 사용자 상태 초기화 및 병합
 if "user_progress" not in st.session_state:
     st.session_state.user_progress = load_user_progress()
 
@@ -113,7 +114,6 @@ if df_base is not None:
             current_df.at[idx, "맞춘 횟수"] = saved_stats.get("맞춘 횟수", 0)
             current_df.at[idx, "틀린 횟수"] = saved_stats.get("틀린 횟수", 0)
 
-# 단어 상태 업데이트 백업 함수
 def sync_and_save_word(word, level, correct_inc=0, wrong_inc=0):
     real_idx = current_df[current_df['영어 단어'] == word].index[0]
     
@@ -134,7 +134,7 @@ def sync_and_save_word(word, level, correct_inc=0, wrong_inc=0):
 
 # --- 6. 텍스트 강조 및 빈칸 처리 헬퍼 함수 ---
 def highlight_target_word(sentence, target_word):
-    if not sentence or sentence in ["예문 없음", "대본 예문 없음"]:
+    if not sentence or sentence in ["예문 없음", "대본 예문 없음", "-"]:
         return "등록된 예문이 없습니다."
     pattern = re.compile(r'\b(' + re.escape(target_word) + r')\b', re.IGNORECASE)
     return pattern.sub(r'**\1**', sentence)
@@ -144,7 +144,7 @@ def make_blank_sentence(sentence, target_word):
     return pattern.sub("✏️ [ ______ ]", sentence)
 
 # --- 7. UI 기본 설정 ---
-st.set_page_config(page_title="3000 단어 완파 프로그램", layout="wide")
+st.set_page_config(page_title="3000 단어 마스터 프로그램", layout="wide")
 
 st.markdown("""
     <style>
@@ -196,7 +196,7 @@ with st.sidebar:
         try:
             st.session_state.user_progress = json.load(uploaded_json)
             save_user_progress(st.session_state.user_progress)
-            st.success("진도 데이터가 успешно 복원되었습니다!")
+            st.success("진도 데이터가 성공적으로 복원되었습니다!")
             st.rerun()
         except Exception:
             st.error("올바른 백업 JSON 파일이 아닙니다.")
@@ -212,7 +212,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # --- TAB 1: 3000 단어장 사전 ---
 with tab1:
-    st.caption("✏️ **팁:** 표에서 뜻을 클릭해 직접 수정한 뒤 '저장하기' 버튼을 누르면 서버에 저장됩니다.")
+    st.caption("✏️ **팁:** 표에서 뜻을 클릭해 직접 수정한 뒤 '저장하기' 버튼을 누르면 저장됩니다.")
     display_df = current_df.copy()
     display_df['숙달도'] = pd.to_numeric(display_df['숙달도'], errors='coerce').fillna(1).astype(int)
     display_df['숙달 상태'] = display_df['숙달도'].apply(lambda x: "⭐"*x)
@@ -221,15 +221,15 @@ with tab1:
     if search:
         display_df = display_df[
             display_df['영어 단어'].astype(str).str.contains(search.lower()) |
-            display_df['대본 문맥 뜻'].astype(str).str.contains(search)
+            display_df['대표 뜻'].astype(str).str.contains(search)
         ]
 
-    target_cols = [c for c in ["영어 단어", "발음기호", "대본 문맥 뜻", "사전 대표 뜻", "품사", "대본 예문", "대본 예문 번역", "숙달 상태", "맞춘 횟수", "틀린 횟수"] if c in display_df.columns]
+    target_cols = [c for c in ["영어 단어", "발음기호", "대표 뜻", "품사", "예문", "예문 번역", "숙달 상태", "맞춘 횟수", "틀린 횟수"] if c in display_df.columns]
 
     edited_df = st.data_editor(display_df[target_cols], use_container_width=True, num_rows="dynamic")
     
     if st.button("💾 수정사항 저장하기", key="save_vocab_btn"):
-        for col in ["대본 문맥 뜻", "사전 대표 뜻", "대본 예문", "대본 예문 번역"]:
+        for col in ["대표 뜻", "예문", "예문 번역"]:
             if col in edited_df.columns:
                 current_df[col] = edited_df[col]
         st.success("성공적으로 저장되었습니다!")
@@ -251,11 +251,10 @@ with tab2:
     if st.session_state.q_idx < total_q:
         row = q_df.iloc[st.session_state.q_idx]
         target_word = str(row['영어 단어']).strip()
-        correct_ans = str(row.get('대본 문맥 뜻', row.get('사전 대표 뜻', '-'))).strip()
-        dict_ans = str(row.get('사전 대표 뜻', correct_ans)).strip()
+        correct_ans = str(row.get('대표 뜻', '-')).strip()
         phonetic = row.get('발음기호', '-')
-        example_sent = row.get('대본 예문', '')
-        example_trans = row.get('대본 예문 번역', '')
+        example_sent = row.get('예문', '')
+        example_trans = row.get('예문 번역', '')
         
         st.progress(st.session_state.q_idx / total_q)
         st.info(f"### **{target_word}** `[{row.get('품사', '')}]` `{phonetic}`")
@@ -263,13 +262,12 @@ with tab2:
         word_audio = get_audio_bytes(target_word)
         if word_audio: st.audio(word_audio, format="audio/mp3")
         
-        st.markdown(f"> 🎬 **예문:** \"{highlight_target_word(example_sent, target_word)}\"")
-        if example_trans and example_trans != "예문 번역 없음":
-            st.markdown(f"> 💡 **번역:** \"{example_trans}\"")
+        st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_sent, target_word)}\"")
+        if example_trans and example_trans != "예문 없음":
+            st.markdown(f"> 💬 **해석:** \"{example_trans}\"")
 
         if 'q_curr_opts' not in st.session_state or st.session_state.get('q_opts_word') != target_word:
-            mean_col = '대본 문맥 뜻' if '대본 문맥 뜻' in current_df.columns else '사전 대표 뜻'
-            all_meanings = list(set(current_df[mean_col].astype(str).str.strip()) - {correct_ans})
+            all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_ans})
             distractors = random.sample(all_meanings, min(3, len(all_meanings)))
             options = distractors + [correct_ans]
             random.shuffle(options)
@@ -306,8 +304,6 @@ with tab2:
             else:
                 st.error(f"❌ 틀렸습니다! 내가 선택한 답: '{u_ans}' ➔ **정답: '{correct_ans}'**")
             
-            st.info(f"📖 **사전 대표 뜻 참고:** {dict_ans}")
-            
             if st.button("다음 문제 ➡️", key="q_next_btn"):
                 st.session_state.q_idx += 1
                 st.session_state.q_answered = False
@@ -326,7 +322,7 @@ with tab3:
         st.success("👏 현재 틀린 단어가 없습니다! 완벽합니다.")
     else:
         st.caption(f"총 **{len(wrong_df)}개**의 틀린 단어가 기록되어 있습니다.")
-        target_cols_w = [c for c in ["영어 단어", "발음기호", "대본 문맥 뜻", "사전 대표 뜻", "품사", "틀린 횟수"] if c in wrong_df.columns]
+        target_cols_w = [c for c in ["영어 단어", "발음기호", "대표 뜻", "품사", "틀린 횟수"] if c in wrong_df.columns]
         st.dataframe(wrong_df[target_cols_w], use_container_width=True)
         
         st.divider()
@@ -336,23 +332,21 @@ with tab3:
             if st.session_state.w_idx < len(wrong_df):
                 w_row = wrong_df.iloc[st.session_state.w_idx]
                 target_w = str(w_row['영어 단어']).strip()
-                correct_w = str(w_row.get('대본 문맥 뜻', w_row.get('사전 대표 뜻', '-'))).strip()
-                dict_w = str(w_row.get('사전 대표 뜻', correct_w)).strip()
+                correct_w = str(w_row.get('대표 뜻', '-')).strip()
                 phonetic_w = w_row.get('발음기호', '-')
-                example_w = w_row.get('대본 예문', '')
-                example_trans_w = w_row.get('대본 예문 번역', '')
+                example_w = w_row.get('예문', '')
+                example_trans_w = w_row.get('예문 번역', '')
                 
                 st.info(f"### **{target_w}** `{phonetic_w}` (누적 틀린 횟수: {w_row['틀린 횟수']}회)")
                 w_audio = get_audio_bytes(target_w)
                 if w_audio: st.audio(w_audio, format="audio/mp3")
 
-                st.markdown(f"> 🎬 **예문:** \"{highlight_target_word(example_w, target_w)}\"")
-                if example_trans_w and example_trans_w != "예문 번역 없음":
-                    st.markdown(f"> 💡 **번역:** \"{example_trans_w}\"")
+                st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_w, target_w)}\"")
+                if example_trans_w and example_trans_w != "예문 없음":
+                    st.markdown(f"> 💬 **해석:** \"{example_trans_w}\"")
                 
                 if 'w_curr_opts' not in st.session_state or st.session_state.get('w_opts_word') != target_w:
-                    mean_col = '대본 문맥 뜻' if '대본 문맥 뜻' in current_df.columns else '사전 대표 뜻'
-                    all_meanings = list(set(current_df[mean_col].astype(str).str.strip()) - {correct_w})
+                    all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_w})
                     distractors = random.sample(all_meanings, min(3, len(all_meanings)))
                     opts = distractors + [correct_w]
                     random.shuffle(opts)
@@ -384,8 +378,6 @@ with tab3:
                     else:
                         st.error(f"❌ 틀렸습니다! **정답: '{correct_w}'**")
                     
-                    st.info(f"📖 **사전 대표 뜻 참고:** {dict_w}")
-                    
                     if st.button("다음 오답 문제 ➡️", key="w_next_btn"):
                         st.session_state.w_idx += 1
                         st.session_state.w_answered = False
@@ -412,24 +404,22 @@ with tab4:
 
     sample = st.session_state.target_sample
     target_word = str(sample['영어 단어']).strip()
-    correct_ans = str(sample.get('대본 문맥 뜻', sample.get('사전 대표 뜻', '-'))).strip()
-    dict_ans = str(sample.get('사전 대표 뜻', correct_ans)).strip()
+    correct_ans = str(sample.get('대표 뜻', '-')).strip()
     phonetic_s = sample.get('발음기호', '-')
-    example_s = sample.get('대본 예문', '')
-    example_trans_s = sample.get('대본 예문 번역', '')
+    example_s = sample.get('예문', '')
+    example_trans_s = sample.get('예문 번역', '')
     curr_level = int(sample['숙달도'])
 
     st.markdown(f"### 단어: **{target_word}** `{phonetic_s}` (`{'⭐'*curr_level}`)")
     rev_audio = get_audio_bytes(target_word)
     if rev_audio: st.audio(rev_audio, format="audio/mp3")
 
-    st.markdown(f"> 🎬 **예문:** \"{highlight_target_word(example_s, target_word)}\"")
-    if example_trans_s and example_trans_s != "예문 번역 없음":
-        st.markdown(f"> 💡 **번역:** \"{example_trans_s}\"")
+    st.markdown(f"> 💡 **예문:** \"{highlight_target_word(example_s, target_word)}\"")
+    if example_trans_s and example_trans_s != "예문 없음":
+        st.markdown(f"> 💬 **해석:** \"{example_trans_s}\"")
 
     if 'rev_curr_opts' not in st.session_state or st.session_state.get('rev_opts_word') != target_word:
-        mean_col = '대본 문맥 뜻' if '대본 문맥 뜻' in current_df.columns else '사전 대표 뜻'
-        all_meanings = list(set(current_df[mean_col].astype(str).str.strip()) - {correct_ans})
+        all_meanings = list(set(current_df['대표 뜻'].astype(str).str.strip()) - {correct_ans})
         distractors = random.sample(all_meanings, min(3, len(all_meanings)))
         options = distractors + [correct_ans]
         random.shuffle(options)
@@ -472,8 +462,6 @@ with tab4:
         else:
             st.error(f"❌ 틀렸습니다! 선택: '{u_ans}' ➔ **정답: '{correct_ans}'** -> 숙달도 초기화⬇️")
 
-        st.info(f"📖 **사전 대표 뜻 참고:** {dict_ans}")
-
         if st.button("다음 카드 ➡️", key="rev_next_btn"):
             st.session_state.target_sample = current_df.sample(1, weights=(6 - current_df['숙달도'])**2).iloc[0]
             st.session_state.rev_start_time = time.time()
@@ -481,11 +469,11 @@ with tab4:
             st.session_state.pop('rev_curr_opts', None)
             st.rerun()
 
-# --- TAB 5: 예문 암기 ---
+# --- TAB 5: 예문 암기 (3000 단어장 엑셀 기반) ---
 with tab5:
     sentence_df = current_df[
-        (current_df['대본 예문'] != '예문 없음') & 
-        (current_df['대본 예문'].notna())
+        (current_df['예문'] != '예문 없음') & 
+        (current_df['예문'].notna())
     ].reset_index(drop=True)
     
     if sentence_df.empty:
@@ -508,15 +496,15 @@ with tab5:
             if st.session_state.sent_idx < total_sent:
                 s_row = quiz_sent_df.iloc[st.session_state.sent_idx]
                 target_w = str(s_row['영어 단어']).strip()
-                full_sent = s_row['대본 예문']
-                trans_sent = s_row['대본 예문 번역']
+                full_sent = s_row['예문']
+                trans_sent = s_row['예문 번역']
                 blanked_sent = make_blank_sentence(full_sent, target_w)
                 
                 st.progress((st.session_state.sent_idx) / total_sent)
                 st.caption(f"예문 {st.session_state.sent_idx + 1} / {total_sent}")
                 
                 st.info(f"💡 **해석:** {trans_sent}")
-                st.warning(f"🎬 **문장:** {blanked_sent}")
+                st.warning(f"📝 **문장:** {blanked_sent}")
                 
                 if not st.session_state.get('sent_answered', False):
                     with st.form(key=f"sent_quiz_form_{st.session_state.sent_idx}"):
@@ -563,13 +551,12 @@ with tab5:
 
         else:
             for i, row in sentence_df.iterrows():
-                c_meaning = row.get('대본 문맥 뜻', row.get('사전 대표 뜻', ''))
-                d_meaning = row.get('사전 대표 뜻', c_meaning)
+                meaning = row.get('대표 뜻', '')
                 
-                with st.expander(f"{i+1}. 💡 {row['대본 예문 번역']}"):
-                    st.markdown(f"**영어:** {highlight_target_word(row['대본 예문'], row['영어 단어'])}")
-                    st.caption(f"단어: **{row['영어 단어']}** `{row['발음기호']}` | 문맥 뜻: **{c_meaning}** (사전 뜻: {d_meaning})")
+                with st.expander(f"{i+1}. 💡 {row['예문 번역']}"):
+                    st.markdown(f"**영어:** {highlight_target_word(row['예문'], row['영어 단어'])}")
+                    st.caption(f"단어: **{row['영어 단어']}** `{row['발음기호']}` | 뜻: **{meaning}**")
                     
-                    card_audio = get_audio_bytes(row['대본 예문'])
+                    card_audio = get_audio_bytes(row['예문'])
                     if card_audio:
                         st.audio(card_audio, format="audio/mp3")
