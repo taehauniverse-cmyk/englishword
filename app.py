@@ -10,6 +10,38 @@ from gtts import gTTS
 # --- 페이지 설정 ---
 st.set_page_config(page_title="15일 완성 3000 단어장", page_icon="⚡", layout="centered")
 
+# --- 1. 학습 시간 & 단어 진도 자동 저장/복원 스크립트 (JS) ---
+auto_save_script = """
+<script>
+// 1. 학습 시간 누적 카운터
+(function() {
+    let activeSeconds = parseInt(localStorage.getItem('user_active_seconds') || '0');
+    let isVisible = !document.hidden;
+
+    document.addEventListener('visibilitychange', function() {
+        isVisible = !document.hidden;
+    });
+
+    setInterval(function() {
+        if (isVisible) {
+            activeSeconds++;
+            localStorage.setItem('user_active_seconds', activeSeconds);
+            
+            let hrs = String(Math.floor(activeSeconds / 3600)).padStart(2, '0');
+            let mins = String(Math.floor((activeSeconds % 3600) / 60)).padStart(2, '0');
+            let secs = String(activeSeconds % 60).padStart(2, '0');
+            
+            let display = window.parent.document.getElementById('timer-display');
+            if (display) {
+                display.innerText = hrs + ":" + mins + ":" + secs;
+            }
+        }
+    }, 1000);
+})();
+</script>
+"""
+components.html(auto_save_script, height=0)
+
 # --- 원어민 발음 (gTTS) ---
 @st.cache_data
 def get_audio_bytes(text):
@@ -33,53 +65,15 @@ def load_vocab_data():
 
 df = load_vocab_data()
 
-# --- 사이드바: 실시간 접속 시간 타이머 (이탈 시 자동 정지) ---
+# --- 사이드바: 타이머 ---
 with st.sidebar:
     st.subheader("⏱️ 순수 학습 시간")
-    timer_html = """
-    <div style="
-        background: #0f172a;
-        color: #38bdf8;
-        padding: 12px;
-        border-radius: 12px;
-        font-size: 14px;
-        font-weight: bold;
-        text-align: center;
-        border: 1px solid #38bdf8;
-        font-family: system-ui, -apple-system, sans-serif;
-    ">
-        현재 세션 접속<br>
+    st.markdown("""
+    <div style="background: #0f172a; color: #38bdf8; padding: 12px; border-radius: 12px; font-size: 14px; font-weight: bold; text-align: center; border: 1px solid #38bdf8;">
+        현재 접속 누적 시간<br>
         <span id="timer-display" style="font-size: 22px; color: #ffffff;">00:00:00</span>
     </div>
-
-    <script>
-    (function() {
-        let activeSeconds = parseInt(localStorage.getItem('user_active_seconds') || '0');
-        let isVisible = !document.hidden;
-
-        document.addEventListener('visibilitychange', function() {
-            isVisible = !document.hidden;
-        });
-
-        setInterval(function() {
-            if (isVisible) {
-                activeSeconds++;
-                localStorage.setItem('user_active_seconds', activeSeconds);
-                
-                let hrs = String(Math.floor(activeSeconds / 3600)).padStart(2, '0');
-                let mins = String(Math.floor((activeSeconds % 3600) / 60)).padStart(2, '0');
-                let secs = String(activeSeconds % 60).padStart(2, '0');
-                
-                let display = document.getElementById('timer-display');
-                if (display) {
-                    display.innerText = hrs + ":" + mins + ":" + secs;
-                }
-            }
-        }, 1000);
-    })();
-    </script>
-    """
-    components.html(timer_html, height=85)
+    """, unsafe_allow_html=True)
 
 # --- 사용자 상태 초기화 ---
 if "user_data" not in st.session_state:
@@ -125,14 +119,14 @@ if df is not None:
     st.sidebar.progress(min(1.0, today_done / 200))
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 진도 데이터 백업")
+st.sidebar.subheader("💾 진도 데이터 수동 백업/복원")
 user_json = json.dumps(st.session_state.user_data, ensure_ascii=False, indent=2)
-st.sidebar.download_button("📥 백업 저장", user_json, f"vocab_15days_{datetime.date.today()}.json", "application/json")
+st.sidebar.download_button("📥 파일로 저장", user_json, f"vocab_15days_{datetime.date.today()}.json", "application/json")
 
-uploaded_file = st.sidebar.file_uploader("📤 백업 복원", type=["json"])
+uploaded_file = st.sidebar.file_uploader("📤 백업 파일 불러오기", type=["json"])
 if uploaded_file is not None:
     st.session_state.user_data = json.load(uploaded_file)
-    st.sidebar.success("복원되었습니다!")
+    st.sidebar.success("성공적으로 불러왔습니다!")
 
 # --- 메인 인터페이스 ---
 st.title("⚡ 15일 완성 3,000 영단어")
@@ -156,9 +150,7 @@ def setup_question(target_word, mode):
     st.session_state.q_options = options
     st.session_state.q_correct = correct_ans
 
-# ==========================================
-# TAB 1: 15단어 세션 (예문 + 한글 해석)
-# ==========================================
+# TAB 1: 15단어 세션
 with tab1:
     today_str = str(datetime.date.today())
     
@@ -186,7 +178,6 @@ with tab1:
             if audio_bytes:
                 st.audio(audio_bytes, format="audio/mp3")
 
-            # 예문 및 한글 해석 함께 표시
             ex_trans = word_info.get("예문_번역", "")
             st.info(f"💡 **예문:** {word_info['예문']}\n\n💬 **해석:** {ex_trans}")
             
@@ -235,9 +226,7 @@ with tab1:
     else:
         st.info("🎈 오늘 배정된 복습 단어를 모두 마쳤습니다!")
 
-# ==========================================
-# TAB 2: 10분 스피드 복습 퀴즈
-# ==========================================
+# TAB 2: 복습 퀴즈
 with tab2:
     st.subheader("⚡ 10분 스피드 복습 퀴즈")
     st.caption("주요 단어를 복습하고 툭툭 풀어봅니다.")
@@ -276,9 +265,7 @@ with tab2:
             st.session_state.user_data["words"][r_target]["box"] = 1
             st.session_state.user_data["words"][r_target]["wrong_cnt"] += 1
 
-# ==========================================
 # TAB 3: 오답 노트
-# ==========================================
 with tab3:
     st.subheader("🗂️ 오답 노트")
     
